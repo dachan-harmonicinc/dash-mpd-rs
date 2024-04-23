@@ -1126,6 +1126,9 @@ pub struct Representation {
     pub href: Option<String>,
     #[serde(rename = "@xlink:actuate", alias = "@actuate")]
     pub actuate: Option<String>,
+
+    #[serde(skip, default)]
+    pub raw_bytes: Option<Vec<u8>>,
 }
 
 /// Describes a media content component.
@@ -1250,6 +1253,9 @@ pub struct ContentProtection {
     pub mspr_kid: Option<MsprKid>,
     #[serde(rename = "@value")]
     pub value: Option<String>,
+
+    #[serde(skip, default)]
+    pub raw_bytes: Option<Vec<u8>>,
 }
 
 /// The purpose of this media stream, such as "caption", "subtitle", "main", "alternate",
@@ -1493,6 +1499,11 @@ pub struct AdaptationSet {
     pub SegmentTemplate: Option<SegmentTemplate>,
     pub SegmentList: Option<SegmentList>,
     pub ContentComponent: Vec<ContentComponent>,
+    #[serde(
+        rename = "ContentProtection",
+        deserialize_with = "deserialize_content_protections",
+        default
+    )]
     pub ContentProtection: Vec<ContentProtection>,
     pub Switching: Vec<Switching>,
     pub Resync: Option<Resync>,
@@ -1503,9 +1514,43 @@ pub struct AdaptationSet {
     pub supplemental_property: Vec<SupplementalProperty>,
     #[serde(rename = "EssentialProperty")]
     pub essential_property: Vec<EssentialProperty>,
-    #[serde(rename = "Representation")]
+    #[serde(
+        rename = "Representation",
+        deserialize_with = "deserialize_representations",
+        default
+    )]
     pub representations: Vec<Representation>,
     pub ProducerReferenceTime: Option<ProducerReferenceTime>,
+}
+
+fn deserialize_content_protections<'de, D>(
+    deserializer: D,
+) -> Result<Vec<ContentProtection>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let mut content_protections: Vec<ContentProtection> = Vec::deserialize(deserializer)?;
+    for c in content_protections.iter_mut() {
+        let mut w: String = String::new();
+        let ser = quick_xml::se::Serializer::new(&mut w);
+        c.serialize(ser).map_err(|e| de::Error::custom(e))?;
+        c.raw_bytes = Some(w.as_bytes().to_vec());
+    }
+    return Ok(content_protections);
+}
+
+fn deserialize_representations<'de, D>(deserializer: D) -> Result<Vec<Representation>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let mut representations: Vec<Representation> = Vec::deserialize(deserializer)?;
+    for r in representations.iter_mut() {
+        let mut w = String::new();
+        let ser = quick_xml::se::Serializer::new(&mut w);
+        r.serialize(ser).map_err(|e| de::Error::custom(e))?;
+        r.raw_bytes = Some(w.as_bytes().to_vec());
+    }
+    return Ok(representations);
 }
 
 /// Identifies the asset to which a given Period belongs. Can be used to implement
@@ -1580,6 +1625,13 @@ pub struct Period {
     pub supplemental_property: Vec<SupplementalProperty>,
     #[serde(rename = "EssentialProperty")]
     pub essential_property: Vec<EssentialProperty>,
+
+    #[serde(skip, default)]
+    pub raw_bytes: Option<Vec<u8>>,
+    #[serde(skip, default)]
+    pub before_base_url: Option<usize>,
+    #[serde(skip, default)]
+    pub after_base_url: Option<usize>,
 }
 
 #[skip_serializing_none]
@@ -1818,7 +1870,7 @@ pub struct MPD {
     /// There may be several BaseURLs, for redundancy (for example multiple CDNs)
     #[serde(rename = "BaseURL")]
     pub base_url: Vec<BaseURL>,
-    #[serde(rename = "Period", default)]
+    #[serde(rename = "Period", deserialize_with = "deserialize_periods", default)]
     pub periods: Vec<Period>,
     #[serde(rename = "Location", default)]
     pub locations: Vec<Location>,
@@ -1836,6 +1888,29 @@ pub struct MPD {
     #[serde(rename = "SupplementalProperty")]
     pub supplemental_property: Vec<SupplementalProperty>,
     pub ContentProtection: Vec<ContentProtection>,
+}
+
+fn deserialize_periods<'de, D>(deserializer: D) -> Result<Vec<Period>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let mut periods: Vec<Period> = Vec::deserialize(deserializer)?;
+    for p in periods.iter_mut() {
+        let mut w = String::new();
+        let ser = quick_xml::se::Serializer::new(&mut w);
+        p.serialize(ser).map_err(|e| de::Error::custom(e))?;
+        p.before_base_url = w.find("<BaseURL");
+        if !p.before_base_url.is_none() {
+            p.after_base_url = w.rfind("</BaseURL>").map(|i| i + "</BaseURL>".len());
+        } else {
+            let idx = w.find(">");
+            p.before_base_url = idx.map(|i| i + 1);
+            p.after_base_url = p.before_base_url;
+        }
+
+        p.raw_bytes = Some(w.as_bytes().to_vec());
+    }
+    return Ok(periods);
 }
 
 impl std::fmt::Display for MPD {
