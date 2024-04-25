@@ -944,6 +944,20 @@ pub struct FramePacking {
     pub value: Option<String>,
 }
 
+#[skip_serializing_none]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Hash)]
+#[serde(default)]
+pub struct RandomAccess {
+    #[serde(rename = "@interval")]
+    pub interval: Option<String>,
+    #[serde(rename = "@type")]
+    pub access_type: Option<String>,
+    #[serde(rename = "@minBufferTime")]
+    pub min_buffer_time: Option<String>,
+    #[serde(rename = "@bandwidth")]
+    pub bandwidth: Option<String>,
+}
+
 /// Information used to allow Adaptation Set Switching (for instance, allowing the player to switch
 /// between camera angles). This is different from "bitstream switching".
 #[skip_serializing_none]
@@ -1308,6 +1322,10 @@ pub struct Event {
     /// compatibility; message content should be included in the Event element instead.
     #[serde(rename = "@messageData")]
     pub messageData: Option<String>,
+    #[serde(rename = "@hlit-scte35:elapsedTime", alias="@elapsedTime")]
+    pub elapsed_time: Option<i64>,
+    #[serde(rename = "@hlit-scte35:segmentTypeId", alias="@segmentTypeId")]
+    pub semgment_type_id: Option<String>,
     #[cfg(feature = "scte35")]
     #[serde(rename = "scte35:Signal", alias="Signal")]
     #[cfg(feature = "scte35")]
@@ -1403,6 +1421,14 @@ pub struct Label {
     pub content: String,
 }
 
+// TODO
+#[skip_serializing_none]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq, Hash)]
+#[serde(default)]
+pub struct ContentPopularityRate {
+}
+
+
 /// Contains a set of Representations. For example, if multiple language streams are available for
 /// the audio content, each one can be in its own AdaptationSet. DASH implementation guidelines
 /// indicate that "representations in the same video adaptation set should be alternative encodings
@@ -1495,6 +1521,7 @@ pub struct AdaptationSet {
     pub Role: Vec<Role>,
     pub Rating: Vec<Rating>,
     pub Viewpoint: Vec<Viewpoint>,
+    pub GroupLabel: Vec<Label>,
     pub Label: Vec<Label>,
     pub SegmentTemplate: Option<SegmentTemplate>,
     pub SegmentList: Option<SegmentList>,
@@ -1521,6 +1548,9 @@ pub struct AdaptationSet {
     )]
     pub representations: Vec<Representation>,
     pub ProducerReferenceTime: Option<ProducerReferenceTime>,
+    pub FramePacking: Vec<FramePacking>,
+    pub RandomAccess: Vec<RandomAccess>,
+    pub ContentPopularityRate: Vec<ContentPopularityRate>
 }
 
 fn deserialize_content_protections<'de, D>(
@@ -1808,6 +1838,12 @@ pub struct MPD {
     #[serialize_always]
     #[serde(rename="@xmlns:scte35", alias="@scte35", serialize_with="scte35::serialize_scte35_ns")]
     pub scte35: Option<String>,
+    #[serde(rename = "@xmlns:hlit-scte35")]
+    pub hlit_scte35: Option<String>,
+    #[serde(rename = "@xmlns:mspr")]
+    pub mspr: Option<String>,
+    #[serde(rename = "@xmlns:dolby")]
+    pub dolby: Option<String>,
     /// The XML namespace prefix used by convention for DASH extensions proposed by the Digital
     /// Video Broadcasting Project, as per RFC 5328.
     #[serialize_always]
