@@ -574,7 +574,7 @@ pub struct Scte214ContentIdentifier {
 pub struct S {
     /// Time
     #[serde(rename = "@t")]
-    pub t: Option<u64>,
+    pub t: u64,
     #[serde(rename = "@n")]
     pub n: Option<u64>,
     /// The duration (shall not exceed the value of MPD@maxSegmentDuration).
@@ -583,7 +583,7 @@ pub struct S {
     /// The repeat count (number of contiguous Segments with identical MPD duration minus one),
     /// defaulting to zero if not present.
     #[serde(rename = "@r")]
-    pub r: Option<i64>,
+    pub r: Option<u64>,
     #[serde(rename = "@k")]
     pub k: Option<u64>,
 }
@@ -1550,7 +1550,77 @@ pub struct AdaptationSet {
     pub ProducerReferenceTime: Option<ProducerReferenceTime>,
     pub FramePacking: Vec<FramePacking>,
     pub RandomAccess: Vec<RandomAccess>,
-    pub ContentPopularityRate: Vec<ContentPopularityRate>
+    pub ContentPopularityRate: Vec<ContentPopularityRate>,
+
+    #[serde(skip, default)]
+    pub raw_bytes: Option<Vec<u8>>,
+    #[serde(skip, default)]
+    pub before_pto: usize,
+    #[serde(skip, default)]
+    pub after_pto: usize,
+    #[serde(skip, default)]
+    pub before_segment_timeline: usize,
+    #[serde(skip, default)]
+    pub after_segment_timeline: usize,
+}
+
+fn deserialize_adaptation_sets<'de, D>(deserializer: D) -> Result<Vec<AdaptationSet>, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let mut adaptation_sets: Vec<AdaptationSet> = Vec::deserialize(deserializer)?;
+    for a in adaptation_sets.iter_mut() {
+        pre_encode_adaptation_set(a).map_err(|e| de::Error::custom(e))?;
+    }
+    return Ok(adaptation_sets);
+}
+
+fn pre_encode_adaptation_set(a: &mut AdaptationSet) -> Result<(), String> {
+    let mut w = String::new();
+    let ser = quick_xml::se::Serializer::new(&mut w);
+    a.serialize(ser).map_err(|e| e.to_string())?;
+
+    // presentationTimeOffset="..."
+
+    // i < before_pto
+    let before_pto = match w.find("presentationTimeOffset=\"") {
+        Some(i) => i + "presentationTimeOffset=\"".len(),
+        None => return Err("PreEnocdeAdaptationSet: presentationTimeOffset not found".to_string()),
+    };
+
+    // i >= after_pto
+    let after_pto = match (&w[before_pto..]).find("\"") {
+        Some(i) => i + before_pto,
+        None => return Err("PreEnocdeAdaptationSet: presentationTimeOffset not found".to_string()),
+    };
+
+    a.before_pto = before_pto;
+    a.after_pto = after_pto;
+
+    // <SegmentTimeline ...> ... </SegmentTimeline>
+
+    // i < before_segment_timeline
+    let before_segment_timeline = w.find("<SegmentTimeline");
+    if before_segment_timeline.is_none() {
+        let idx = match w.find(">") {
+            Some(i) => i,
+            None => return Err("PreEnocdeAdaptationSet: SegmentTimeline not found".to_string()),
+        };
+        a.before_segment_timeline = idx + 1;
+        a.after_segment_timeline = a.before_segment_timeline;
+    } else {
+        // i >= after_segment_timeline
+        let idx = match w.rfind("</SegmentTimeline>") {
+            Some(i) => i,
+            None => return Err("PreEnocdeAdaptationSet: SegmentTimeline not found".to_string()),
+        };
+        a.before_segment_timeline = before_segment_timeline.unwrap();
+        a.after_segment_timeline = idx + "</SegmentTimeline>".len();
+    }
+
+    a.raw_bytes = Some(w.as_bytes().to_vec());
+
+    Ok(())
 }
 
 fn deserialize_content_protections<'de, D>(
@@ -1621,7 +1691,12 @@ pub struct Subset {
 pub struct Period {
     #[serde(rename = "@id")]
     pub id: Option<String>,
+
     pub BaseURL: Vec<BaseURL>,
+
+    #[serde(rename = "EventStream")]
+    pub event_streams: Vec<EventStream>,
+
     /// The start time of the Period relative to the MPD availability start time.
     #[serde(rename = "@start",
             serialize_with = "serialize_xs_duration",
@@ -1643,14 +1718,12 @@ pub struct Period {
     pub actuate: Option<String>,
     pub SegmentTemplate: Option<SegmentTemplate>,
     pub ContentProtection: Vec<ContentProtection>,
-    #[serde(rename = "AdaptationSet")]
+    #[serde(rename = "AdaptationSet", deserialize_with = "deserialize_adaptation_sets")]
     pub adaptations: Vec<AdaptationSet>,
     #[serde(rename = "Subset")]
     pub subsets: Vec<Subset>,
     #[serde(rename = "AssetIdentifier")]
     pub asset_identifier: Option<AssetIdentifier>,
-    #[serde(rename = "EventStream")]
-    pub event_streams: Vec<EventStream>,
     #[serde(rename = "SupplementalProperty")]
     pub supplemental_property: Vec<SupplementalProperty>,
     #[serde(rename = "EssentialProperty")]
@@ -1659,9 +1732,13 @@ pub struct Period {
     #[serde(skip, default)]
     pub raw_bytes: Option<Vec<u8>>,
     #[serde(skip, default)]
-    pub before_base_url: Option<usize>,
+    pub base_url_start: usize,
     #[serde(skip, default)]
-    pub after_base_url: Option<usize>,
+    pub base_url_end: usize,
+    #[serde(skip, default)]
+    pub event_stream_start: usize,
+    #[serde(skip, default)]
+    pub event_stream_end: usize,
 }
 
 #[skip_serializing_none]
@@ -1932,22 +2009,44 @@ where
 {
     let mut periods: Vec<Period> = Vec::deserialize(deserializer)?;
     for p in periods.iter_mut() {
-        let mut w = String::new();
-        let ser = quick_xml::se::Serializer::new(&mut w);
-        p.serialize(ser).map_err(|e| de::Error::custom(e))?;
-        p.before_base_url = w.find("<BaseURL");
-        if !p.before_base_url.is_none() {
-            p.after_base_url = w.rfind("</BaseURL>").map(|i| i + "</BaseURL>".len());
-        } else {
-            let idx = w.find(">");
-            p.before_base_url = idx.map(|i| i + 1);
-            p.after_base_url = p.before_base_url;
-        }
-
-        p.raw_bytes = Some(w.as_bytes().to_vec());
+        pre_encode_period(p).map_err(|e| de::Error::custom(e))?;
     }
     return Ok(periods);
 }
+
+fn pre_encode_period(p: &mut Period) -> Result<(), String> {
+    let mut w = String::new();
+    let ser = quick_xml::se::Serializer::new(&mut w);
+    p.serialize(ser).map_err(|e| e.to_string())?;
+
+    let period_start_tag_end = w.find(">").unwrap();
+    let base_url_start = w.find("<BaseURL");
+    if let Some(i) = base_url_start {
+        p.base_url_start = i;
+        p.base_url_end = w.rfind("</BaseURL>").unwrap() + "</BaseURL>".len();
+    } else {
+        p.base_url_start = period_start_tag_end + 1;
+        p.base_url_end = p.base_url_start;
+    }
+
+    let event_stream_start = w.find("<EventStream");
+    if let Some(i) = event_stream_start {
+        p.event_stream_start = i;
+        p.event_stream_end = w.rfind("</EventStream>").unwrap() + "</EventStream>".len();
+    } else {
+        p.event_stream_start = p.base_url_end;
+        p.event_stream_end = p.event_stream_start;
+    }
+
+    p.raw_bytes = Some(w.as_bytes().to_vec());
+
+    // base_url_start <= base_url_end <= event_stream_start <= event_stream_end
+    assert!(p.base_url_start <= p.base_url_end);
+    assert!(p.base_url_end <= p.event_stream_start);
+    assert!(p.event_stream_start <= p.event_stream_end);
+    Ok(())
+}
+
 
 impl std::fmt::Display for MPD {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -2004,7 +2103,7 @@ pub fn is_audio_adaptation(a: &&AdaptationSet) -> bool {
 /// It contains video if the `contentType` attribute` is `video`, or the `mimeType` attribute is
 /// `video/*` (but without a codec specifying a subtitle format), or if one of its child
 /// `Representation` nodes has an audio `contentType` or `mimeType` attribute.
-pub fn is_video_adaptation(a: &&AdaptationSet) -> bool {
+pub fn is_video_adaptation(a: &AdaptationSet) -> bool {
     if let Some(ct) = &a.contentType {
         if ct == "video" {
             return true;
