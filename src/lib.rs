@@ -1555,9 +1555,13 @@ pub struct AdaptationSet {
     #[serde(skip, default)]
     pub raw_bytes: Option<Vec<u8>>,
     #[serde(skip, default)]
+    pub after_adaptation_set_start_tag: usize,
+    #[serde(skip, default)]
     pub before_pto: usize,
     #[serde(skip, default)]
     pub after_pto: usize,
+    #[serde(skip, default)]
+    pub after_tag_before_segment_timeline: usize,
     #[serde(skip, default)]
     pub before_segment_timeline: usize,
     #[serde(skip, default)]
@@ -1672,6 +1676,8 @@ pub struct Period {
 
     #[serde(skip, default)]
     pub raw_bytes: Option<Vec<u8>>,
+    #[serde(skip, default)]
+    pub after_period_start_tag: usize,
     #[serde(skip, default)]
     pub base_url_start: usize,
     #[serde(skip, default)]
