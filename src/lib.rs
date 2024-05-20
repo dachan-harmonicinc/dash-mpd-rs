@@ -1564,65 +1564,6 @@ pub struct AdaptationSet {
     pub after_segment_timeline: usize,
 }
 
-fn deserialize_adaptation_sets<'de, D>(deserializer: D) -> Result<Vec<AdaptationSet>, D::Error>
-where
-    D: de::Deserializer<'de>,
-{
-    let mut adaptation_sets: Vec<AdaptationSet> = Vec::deserialize(deserializer)?;
-    for a in adaptation_sets.iter_mut() {
-        pre_encode_adaptation_set(a).map_err(|e| de::Error::custom(e))?;
-    }
-    return Ok(adaptation_sets);
-}
-
-fn pre_encode_adaptation_set(a: &mut AdaptationSet) -> Result<(), String> {
-    let mut w = String::new();
-    let ser = quick_xml::se::Serializer::new(&mut w);
-    a.serialize(ser).map_err(|e| e.to_string())?;
-
-    // presentationTimeOffset="..."
-
-    // i < before_pto
-    let before_pto = match w.find("presentationTimeOffset=\"") {
-        Some(i) => i + "presentationTimeOffset=\"".len(),
-        None => return Err("PreEnocdeAdaptationSet: presentationTimeOffset not found".to_string()),
-    };
-
-    // i >= after_pto
-    let after_pto = match (&w[before_pto..]).find("\"") {
-        Some(i) => i + before_pto,
-        None => return Err("PreEnocdeAdaptationSet: presentationTimeOffset not found".to_string()),
-    };
-
-    a.before_pto = before_pto;
-    a.after_pto = after_pto;
-
-    // <SegmentTimeline ...> ... </SegmentTimeline>
-
-    // i < before_segment_timeline
-    let before_segment_timeline = w.find("<SegmentTimeline");
-    if before_segment_timeline.is_none() {
-        let idx = match w.find(">") {
-            Some(i) => i,
-            None => return Err("PreEnocdeAdaptationSet: SegmentTimeline not found".to_string()),
-        };
-        a.before_segment_timeline = idx + 1;
-        a.after_segment_timeline = a.before_segment_timeline;
-    } else {
-        // i >= after_segment_timeline
-        let idx = match w.rfind("</SegmentTimeline>") {
-            Some(i) => i,
-            None => return Err("PreEnocdeAdaptationSet: SegmentTimeline not found".to_string()),
-        };
-        a.before_segment_timeline = before_segment_timeline.unwrap();
-        a.after_segment_timeline = idx + "</SegmentTimeline>".len();
-    }
-
-    a.raw_bytes = Some(w.as_bytes().to_vec());
-
-    Ok(())
-}
-
 fn deserialize_content_protections<'de, D>(
     deserializer: D,
 ) -> Result<Vec<ContentProtection>, D::Error>
@@ -1718,7 +1659,7 @@ pub struct Period {
     pub actuate: Option<String>,
     pub SegmentTemplate: Option<SegmentTemplate>,
     pub ContentProtection: Vec<ContentProtection>,
-    #[serde(rename = "AdaptationSet", deserialize_with = "deserialize_adaptation_sets")]
+    #[serde(rename = "AdaptationSet")]
     pub adaptations: Vec<AdaptationSet>,
     #[serde(rename = "Subset")]
     pub subsets: Vec<Subset>,
@@ -1983,7 +1924,7 @@ pub struct MPD {
     /// There may be several BaseURLs, for redundancy (for example multiple CDNs)
     #[serde(rename = "BaseURL")]
     pub base_url: Vec<BaseURL>,
-    #[serde(rename = "Period", deserialize_with = "deserialize_periods", default)]
+    #[serde(rename = "Period", default)]
     pub periods: Vec<Period>,
     #[serde(rename = "Location", default)]
     pub locations: Vec<Location>,
@@ -2002,51 +1943,6 @@ pub struct MPD {
     pub supplemental_property: Vec<SupplementalProperty>,
     pub ContentProtection: Vec<ContentProtection>,
 }
-
-fn deserialize_periods<'de, D>(deserializer: D) -> Result<Vec<Period>, D::Error>
-where
-    D: de::Deserializer<'de>,
-{
-    let mut periods: Vec<Period> = Vec::deserialize(deserializer)?;
-    for p in periods.iter_mut() {
-        pre_encode_period(p).map_err(|e| de::Error::custom(e))?;
-    }
-    return Ok(periods);
-}
-
-fn pre_encode_period(p: &mut Period) -> Result<(), String> {
-    let mut w = String::new();
-    let ser = quick_xml::se::Serializer::new(&mut w);
-    p.serialize(ser).map_err(|e| e.to_string())?;
-
-    let period_start_tag_end = w.find(">").unwrap();
-    let base_url_start = w.find("<BaseURL");
-    if let Some(i) = base_url_start {
-        p.base_url_start = i;
-        p.base_url_end = w.rfind("</BaseURL>").unwrap() + "</BaseURL>".len();
-    } else {
-        p.base_url_start = period_start_tag_end + 1;
-        p.base_url_end = p.base_url_start;
-    }
-
-    let event_stream_start = w.find("<EventStream");
-    if let Some(i) = event_stream_start {
-        p.event_stream_start = i;
-        p.event_stream_end = w.rfind("</EventStream>").unwrap() + "</EventStream>".len();
-    } else {
-        p.event_stream_start = p.base_url_end;
-        p.event_stream_end = p.event_stream_start;
-    }
-
-    p.raw_bytes = Some(w.as_bytes().to_vec());
-
-    // base_url_start <= base_url_end <= event_stream_start <= event_stream_end
-    assert!(p.base_url_start <= p.base_url_end);
-    assert!(p.base_url_end <= p.event_stream_start);
-    assert!(p.event_stream_start <= p.event_stream_end);
-    Ok(())
-}
-
 
 impl std::fmt::Display for MPD {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
