@@ -574,16 +574,16 @@ pub struct Scte214ContentIdentifier {
 pub struct S {
     /// Time
     #[serde(rename = "@t")]
-    pub t: u64,
+    pub t: i64,
     #[serde(rename = "@n")]
     pub n: Option<u64>,
     /// The duration (shall not exceed the value of MPD@maxSegmentDuration).
     #[serde(rename = "@d")]
-    pub d: u64,
+    pub d: i64,
     /// The repeat count (number of contiguous Segments with identical MPD duration minus one),
     /// defaulting to zero if not present.
     #[serde(rename = "@r")]
-    pub r: Option<u64>,
+    pub r: Option<i64>,
     #[serde(rename = "@k")]
     pub k: Option<u64>,
 }
@@ -661,7 +661,7 @@ pub struct SegmentTemplate {
     #[serde(rename = "@duration")]
     pub duration: Option<f64>,
     #[serde(rename = "@timescale")]
-    pub timescale: Option<u64>,
+    pub timescale: Option<i64>,
     /// Indicates a possible offset between media segment start/end points and period start/end points.
     #[serde(rename = "@eptDelta")]
     pub eptDelta: Option<i64>,
@@ -670,7 +670,7 @@ pub struct SegmentTemplate {
     #[serde(rename = "@pdDelta")]
     pub pbDelta: Option<i64>,
     #[serde(rename = "@presentationTimeOffset")]
-    pub presentationTimeOffset: Option<u64>,
+    pub presentationTimeOffset: Option<i64>,
     #[serde(rename = "@bitstreamSwitching")]
     pub bitstreamSwitching: Option<String>,
     #[serde(rename = "@availabilityTimeOffset", serialize_with="serialize_opt_xsd_double")]
@@ -2251,13 +2251,13 @@ fn content_protection_type(cp: &ContentProtection) -> String {
 fn check_segment_template_duration(
     st: &SegmentTemplate,
     max_seg_duration: &Duration,
-    outer_timescale: u64) -> Vec<String>
+    outer_timescale: i64) -> Vec<String>
 {
     let mut errors = Vec::new();
     if let Some(timeline) = &st.SegmentTimeline {
         for s in &timeline.segments {
             let sd = s.d / st.timescale.unwrap_or(outer_timescale);
-            if sd > max_seg_duration.as_secs() {
+            if sd > max_seg_duration.as_secs() as i64 {
                 errors.push(String::from("SegmentTimeline has segment@d > @maxSegmentDuration"));
             }
         }
